@@ -249,7 +249,7 @@ namespace System.Management.Automation
 
                 var members = isStatic
                               ? PSObject.DotNetStaticAdapter.BaseGetMembers<PSMemberInfo>(type)
-                              : PSObject.DotNetInstanceAdapter.GetPropertiesAndMethods(type, false);
+                              : PSObject.DotNetInstanceAdapter.GetPropertiesMethodsAndEvents(type, false);
 
                 if (filterToCall != null)
                 {
