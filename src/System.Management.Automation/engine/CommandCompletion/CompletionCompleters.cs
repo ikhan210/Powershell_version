@@ -2114,7 +2114,7 @@ namespace System.Management.Automation
                             break;
                         }
 
-                        if (parameterName.Equals("ExcludedModule", StringComparison.OrdinalIgnoreCase))
+                        if (parameterName.Equals("ExcludeModule", StringComparison.OrdinalIgnoreCase))
                         {
                             NativeCompletionGetCommand(context, moduleName: null, parameterName, result);
                             break;
@@ -3005,7 +3005,7 @@ namespace System.Management.Automation
             }
             else if (!string.IsNullOrEmpty(paramName)
                 && (paramName.Equals("Module", StringComparison.OrdinalIgnoreCase)
-                || paramName.Equals("ExcludedModule", StringComparison.OrdinalIgnoreCase)))
+                || paramName.Equals("ExcludeModule", StringComparison.OrdinalIgnoreCase)))
             {
                 RemoveLastNullCompletionResult(result);
 
