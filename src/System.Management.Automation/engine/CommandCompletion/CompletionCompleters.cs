@@ -2114,6 +2114,12 @@ namespace System.Management.Automation
                             break;
                         }
 
+                        if (parameterName.Equals("ExcludedModule", StringComparison.OrdinalIgnoreCase))
+                        {
+                            NativeCompletionGetCommand(context, moduleName: null, parameterName, result);
+                            break;
+                        }
+
                         if (parameterName.Equals("Name", StringComparison.OrdinalIgnoreCase))
                         {
                             var moduleNames = NativeCommandArgumentCompletion_ExtractSecondaryArgument(boundArguments, "Module");
@@ -2997,7 +3003,9 @@ namespace System.Management.Automation
 
                 result.Add(CompletionResult.Null);
             }
-            else if (!string.IsNullOrEmpty(paramName) && paramName.Equals("Module", StringComparison.OrdinalIgnoreCase))
+            else if (!string.IsNullOrEmpty(paramName)
+                && (paramName.Equals("Module", StringComparison.OrdinalIgnoreCase)
+                || paramName.Equals("ExcludedModule", StringComparison.OrdinalIgnoreCase)))
             {
                 RemoveLastNullCompletionResult(result);
 
