@@ -19,8 +19,9 @@ $script:Options = $null
 $dotnetMetadata = Get-Content $PSScriptRoot/DotnetRuntimeMetadata.json | ConvertFrom-Json
 $dotnetCLIChannel = $dotnetMetadata.Sdk.Channel
 $dotnetCLIQuality = $dotnetMetadata.Sdk.Quality
-$dotnetAzureFeed = $env:__DONET_RUNTIME_FEED ?? $dotnetMetadata.Sdk.azureFeed
-$dotnetAzureFeedSecret = $env:__DONET_RUNTIME_FEED_KEY
+# __DOTNET_RUNTIME_FEED and __DOTNET_RUNTIME_FEED_KEY are private variables used in release builds
+$dotnetAzureFeed = if ([string]::IsNullOrWhiteSpace($env:__DOTNET_RUNTIME_FEED)) { $dotnetMetadata.Sdk.azureFeed } else { $env:__DOTNET_RUNTIME_FEED }
+$dotnetAzureFeedSecret = $env:__DOTNET_RUNTIME_FEED_KEY
 $dotnetSDKVersionOveride = $dotnetMetadata.Sdk.sdkImageOverride
 $dotnetCLIRequiredVersion = $(Get-Content $PSScriptRoot/global.json | ConvertFrom-Json).Sdk.Version
 
@@ -138,6 +139,7 @@ function Get-EnvironmentInformation
     {
         $environment += @{'IsAdmin' = (New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)}
         $environment += @{'nugetPackagesRoot' = "${env:USERPROFILE}\.nuget\packages", "${env:NUGET_PACKAGES}"}
+        $environment += @{ 'OSArchitecture' = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture }
     }
     else
     {
@@ -158,6 +160,7 @@ function Get-EnvironmentInformation
     }
 
     if ($environment.IsLinux) {
+        $environment += @{ 'OSArchitecture' = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture }
         $LinuxInfo = Get-Content /etc/os-release -Raw | ConvertFrom-StringData
         $lsb_release = Get-Command lsb_release -Type Application -ErrorAction Ignore | Select-Object -First 1
         if ($lsb_release) {
@@ -188,6 +191,7 @@ function Get-EnvironmentInformation
         $environment += @{'IsRedHatFamily' = $environment.IsCentOS -or $environment.IsFedora -or $environment.IsRedHat}
         $environment += @{'IsSUSEFamily' = $environment.IsSLES -or $environment.IsOpenSUSE}
         $environment += @{'IsAlpine' = $LinuxInfo.ID -match 'alpine'}
+        $environment += @{'IsMariner' = $LinuxInfo.ID -match 'mariner'}
 
         # Workaround for temporary LD_LIBRARY_PATH hack for Fedora 24
         # https://github.com/PowerShell/PowerShell/issues/2511
@@ -201,7 +205,8 @@ function Get-EnvironmentInformation
             $environment.IsUbuntu -or
             $environment.IsRedHatFamily -or
             $environment.IsSUSEFamily -or
-            $environment.IsAlpine)
+            $environment.IsAlpine -or
+            $environment.IsMariner)
         ) {
             if ($SkipLinuxDistroCheck) {
                 Write-Warning "The current OS : $($LinuxInfo.ID) is not supported for building PowerShell."
@@ -271,7 +276,7 @@ function Test-IsReleaseCandidate
     return $false
 }
 
-$optimizedFddRegex = 'fxdependent-(linux|alpine|win|win7|osx)-(x64|x86|arm64|arm)'
+$optimizedFddRegex = 'fxdependent-(linux|win|win7|osx)-(x64|x86|arm64|arm)'
 
 function Start-PSBuild {
     [CmdletBinding(DefaultParameterSetName="Default")]
@@ -305,9 +310,11 @@ function Start-PSBuild {
         # These runtimes must match those in project.json
         # We do not use ValidateScript since we want tab completion
         # If this parameter is not provided it will get determined automatically.
-        [ValidateSet("alpine-x64",
+        [ValidateSet("linux-musl-x64",
                      "fxdependent",
+                     "fxdependent-noopt-linux-musl-x64",
                      "fxdependent-linux-x64",
+                     "fxdependent-linux-arm64",
                      "fxdependent-win-desktop",
                      "linux-arm",
                      "linux-arm64",
@@ -426,6 +433,7 @@ Fix steps:
         PSModuleRestore=$PSModuleRestore
         ForMinimalSize=$ForMinimalSize
     }
+
     $script:Options = New-PSOptions @OptionsArguments
 
     if ($StopDevPowerShell) {
@@ -452,8 +460,22 @@ Fix steps:
         $Arguments += "--self-contained"
     }
 
+    if ($Options.Runtime -like 'win*') {
+        # Starting in .NET 8, the .NET SDK won't recognize version-specific RIDs by default, such as win7-x64,
+        # see https://learn.microsoft.com/dotnet/core/compatibility/sdk/8.0/rid-graph for details.
+        # It will cause huge amount of changes in our build infrastructure because our building and packaging
+        # scripts have the 'win7-xx' assumption regarding the target runtime.
+        #
+        # As a workaround, we use the old full RID graph during the build so that we can continue to use the
+        # 'win7-x64' and 'win7-x86' RIDs.
+        $Arguments += "/property:UseRidGraph=true"
+    }
+
     if ($Options.Runtime -like 'win*' -or ($Options.Runtime -like 'fxdependent*' -and $environment.IsWindows)) {
         $Arguments += "/property:IsWindows=true"
+        if(!$environment.IsWindows) {
+            $Arguments += "/property:EnableWindowsTargeting=true"
+        }
     }
     else {
         $Arguments += "/property:IsWindows=false"
@@ -544,7 +566,7 @@ Fix steps:
             Write-Verbose "Building with shim" -Verbose
             $globalToolSrcFolder = Resolve-Path (Join-Path $Options.Top "../Microsoft.PowerShell.GlobalTool.Shim") | Select-Object -ExpandProperty Path
 
-            if ($Options.Runtime -eq 'fxdependent') {
+            if ($Options.Runtime -eq 'fxdependent' -or $Options.Runtime -eq 'fxdependent-noopt-linux-musl-x64') {
                 $Arguments += "/property:SDKToUse=Microsoft.NET.Sdk"
             } elseif ($Options.Runtime -eq 'fxdependent-win-desktop') {
                 $Arguments += "/property:SDKToUse=Microsoft.NET.Sdk.WindowsDesktop"
@@ -647,7 +669,7 @@ Fix steps:
         (Test-IsPreview $psVersion) -and
         -not (Test-IsReleaseCandidate $psVersion)
     ) {
-        if (-not $env:PS_RELEASE_BUILD -and -not $Runtime.Contains("arm") -and -not ($Runtime -like 'fxdependent*')) {
+        if ((Test-ShouldGenerateExperimentalFeatures -Runtime $Options.Runtime)) {
             Write-Verbose "Build experimental feature list by running 'Get-ExperimentalFeature'" -Verbose
             $json = & $publishPath\pwsh -noprofile -command {
                 $expFeatures = Get-ExperimentalFeature | ForEach-Object -MemberName Name
@@ -696,6 +718,45 @@ Fix steps:
     }
 }
 
+function Test-ShouldGenerateExperimentalFeatures
+{
+    param(
+        [Parameter(Mandatory)]
+        $Runtime
+    )
+
+    if ($env:PS_RELEASE_BUILD) {
+        return $false
+    }
+
+    if ($Runtime -like 'fxdependent*') {
+        return $false
+    }
+
+    $runtimePattern = 'unknown-'
+    if ($environment.IsWindows) {
+        $runtimePattern = '^win.*-'
+    }
+
+    if ($environment.IsMacOS) {
+        $runtimePattern = '^osx.*-'
+    }
+
+    if ($environment.IsLinux) {
+        $runtimePattern = '^linux.*-'
+    }
+
+    $runtimePattern += $environment.OSArchitecture.ToString()
+    Write-Verbose "runtime pattern check: $Runtime -match $runtimePattern" -Verbose
+    if ($Runtime -match $runtimePattern) {
+        Write-Verbose "Generating experimental feature list" -Verbose
+        return $true
+    }
+
+    Write-Verbose "Skipping generating experimental feature list" -Verbose
+    return $false
+}
+
 function Restore-PSPackage
 {
     [CmdletBinding()]
@@ -717,7 +778,7 @@ function Restore-PSPackage
 
     if (-not $ProjectDirs)
     {
-        $ProjectDirs = @($Options.Top, "$PSScriptRoot/src/TypeCatalogGen", "$PSScriptRoot/src/ResGen", "$PSScriptRoot/src/Modules")
+        $ProjectDirs = @($Options.Top, "$PSScriptRoot/src/TypeCatalogGen", "$PSScriptRoot/src/ResGen", "$PSScriptRoot/src/Modules", "$PSScriptRoot/tools/wix")
 
         if ($Options.Runtime -like 'fxdependent*') {
             $ProjectDirs += "$PSScriptRoot/src/Microsoft.PowerShell.GlobalTool.Shim"
@@ -749,6 +810,11 @@ function Restore-PSPackage
             $RestoreArguments += "detailed"
         } else {
             $RestoreArguments += "quiet"
+        }
+
+        if ($Options.Runtime -like 'win*') {
+            $RestoreArguments += "/property:EnableWindowsTargeting=True"
+            $RestoreArguments += "/property:UseRidGraph=True"
         }
 
         if ($InteractiveAuth) {
@@ -829,15 +895,17 @@ function New-PSOptions {
         [ValidateSet('Debug', 'Release', 'CodeCoverage', 'StaticAnalysis', '')]
         [string]$Configuration,
 
-        [ValidateSet("net7.0")]
-        [string]$Framework = "net7.0",
+        [ValidateSet("net9.0")]
+        [string]$Framework = "net9.0",
 
         # These are duplicated from Start-PSBuild
         # We do not use ValidateScript since we want tab completion
         [ValidateSet("",
-                     "alpine-x64",
+                     "linux-musl-x64",
                      "fxdependent",
+                     "fxdependent-noopt-linux-musl-x64",
                      "fxdependent-linux-x64",
+                     "fxdependent-linux-arm64",
                      "fxdependent-win-desktop",
                      "linux-arm",
                      "linux-arm64",
@@ -922,9 +990,14 @@ function New-PSOptions {
 
     # Build the Output path
     if (!$Output) {
-        if ($Runtime -like 'fxdependent*') {
+        if ($Runtime -like 'fxdependent*' -and ($Runtime -like 'fxdependent*linux*' -or $Runtime -like 'fxdependent*alpine*')) {
+            $outputRuntime = $Runtime -replace 'fxdependent-', ''
+            $Output = [IO.Path]::Combine($Top, "bin", $Configuration, $Framework, $outputRuntime, "publish", $Executable)
+        }
+        elseif ($Runtime -like 'fxdependent*') {
             $Output = [IO.Path]::Combine($Top, "bin", $Configuration, $Framework, "publish", $Executable)
-        } else {
+        }
+        else {
             $Output = [IO.Path]::Combine($Top, "bin", $Configuration, $Framework, $Runtime, "publish", $Executable)
         }
     } else {
@@ -1070,17 +1143,6 @@ function Publish-CustomConnectionTestModule
     $sourcePath = "${PSScriptRoot}/test/tools/NamedPipeConnection"
     $outPath = "${PSScriptRoot}/test/tools/NamedPipeConnection/out/Microsoft.PowerShell.NamedPipeConnection"
     $publishPath = "${PSScriptRoot}/test/tools/Modules"
-    $refPath = "${sourcePath}/src/code/Ref"
-
-    # Copy the current SMA build to the refPath.
-    $smaPath = Join-Path -Path (Split-Path -Path (Get-PSOutput)) -ChildPath 'System.Management.Automation.dll'
-    if (! (Test-Path -Path $smaPath)) {
-        throw "Publish-CustomConnectionTestModule: Cannot find reference SMA at: ${smaPath}"
-    }
-    if (! (Test-Path -Path $refPath)) {
-        $null = New-Item -Path $refPath -ItemType Directory -Force
-    }
-    Copy-Item -Path $smapath -Destination $refPath -Force
 
     Find-DotNet
 
@@ -1098,7 +1160,6 @@ function Publish-CustomConnectionTestModule
 
         # Clean up build artifacts
         ./build.ps1 -Clean
-        Remove-Item -Path $refPath -Recurse -Force -ErrorAction SilentlyContinue
     }
     finally {
         Pop-Location
@@ -1117,8 +1178,9 @@ function Publish-PSTestTools {
     $tools = @(
         @{ Path="${PSScriptRoot}/test/tools/TestAlc";     Output="library" }
         @{ Path="${PSScriptRoot}/test/tools/TestExe";     Output="exe" }
-        @{ Path="${PSScriptRoot}/test/tools/WebListener"; Output="exe" }
         @{ Path="${PSScriptRoot}/test/tools/TestService"; Output="exe" }
+        @{ Path="${PSScriptRoot}/test/tools/UnixSocket";  Output="exe" }
+        @{ Path="${PSScriptRoot}/test/tools/WebListener"; Output="exe" }
     )
 
     $Options = Get-PSOptions -DefaultToNew
@@ -1150,6 +1212,10 @@ function Publish-PSTestTools {
                 $runtime = $Options.Runtime
             }
 
+            # We are using non-version/distro specific RIDs for test tools, so we need to fix the runtime
+            # value here if it starts with 'win7'.
+            $runtime = $runtime -replace '^win7-', 'win-'
+
             Write-Verbose -Verbose -Message "Starting dotnet publish for $toolPath with runtime $runtime"
 
             dotnet publish --output bin --configuration $Options.Configuration --framework $Options.Framework --runtime $runtime --self-contained | Out-String | Write-Verbose -Verbose
@@ -1171,6 +1237,9 @@ function Publish-PSTestTools {
 
     # `dotnet restore` on test project is not called if product projects have been restored unless -Force is specified.
     Copy-PSGalleryModules -Destination "${PSScriptRoot}/test/tools/Modules" -CsProjPath "$PSScriptRoot/test/tools/Modules/PSGalleryTestModules.csproj" -Force
+
+    # Publish the Microsoft.PowerShell.NamedPipeConnection module
+    Publish-CustomConnectionTestModule
 }
 
 function Get-ExperimentalFeatureTests {
@@ -1280,7 +1349,7 @@ function Start-PSPester {
         # if we are building for Alpine, we must include the runtime as linux-x64
         # will not build runnable test tools
         if ( $environment.IsLinux -and $environment.IsAlpine ) {
-            $publishArgs['runtime'] = 'alpine-x64'
+            $publishArgs['runtime'] = 'linux-musl-x64'
         }
         Publish-PSTestTools @publishArgs | ForEach-Object {Write-Host $_}
 
@@ -1343,7 +1412,7 @@ function Start-PSPester {
         $command += " *> $outputBufferFilePath; '__UNELEVATED_TESTS_THE_END__' >> $outputBufferFilePath"
     }
 
-    Write-Verbose $command
+    Write-Verbose $command -Verbose
 
     $script:nonewline = $true
     $script:inerror = $false
@@ -1575,7 +1644,7 @@ function Publish-TestResults
         # NUnit allowed values are: Passed, Failed, Inconclusive or Ignored (the spec says Skipped but it doesn' work with Azure DevOps)
         # https://github.com/nunit/docs/wiki/Test-Result-XML-Format
         # Azure DevOps Reporting is so messed up for NUnit V2 and doesn't follow their own spec
-        # https://docs.microsoft.com/en-us/azure/devops/pipelines/tasks/test/publish-test-results?view=azure-devops&tabs=yaml
+        # https://learn.microsoft.com/azure/devops/pipelines/tasks/test/publish-test-results?view=azure-devops&tabs=yaml
         # So, we will map skipped to the actual value in the NUnit spec and they will ignore all results for tests which were not executed
         Get-Content $Path | ForEach-Object {
             $_ -replace 'result="Ignored"', 'result="Skipped"'
@@ -1600,9 +1669,15 @@ function script:Start-UnelevatedProcess
         [string]$process,
         [string[]]$arguments
     )
+
     if (-not $environment.IsWindows)
     {
         throw "Start-UnelevatedProcess is currently not supported on non-Windows platforms"
+    }
+
+    if (-not $environment.OSArchitecture -eq 'arm64')
+    {
+        throw "Start-UnelevatedProcess is currently not supported on arm64 platforms"
     }
 
     runas.exe /trustlevel:0x20000 "$process $arguments"
@@ -2095,7 +2170,7 @@ function Start-PSBootstrap {
                     # change the apt frontend back to the original
                     $env:DEBIAN_FRONTEND=$originalDebianFrontEnd
                 }
-            } elseif ($environment.IsLinux -and $environment.IsRedHatFamily) {
+            } elseif ($environment.IsLinux -and ($environment.IsRedHatFamily -or $environment.IsMariner)) {
                 # Build tools
                 $Deps += "which", "curl", "wget"
 
@@ -2141,9 +2216,9 @@ function Start-PSBootstrap {
                 }
             } elseif ($environment.IsMacOS) {
                 if ($environment.UsingHomebrew) {
-                    $PackageManager = "brew"
+                    $baseCommand = "brew install --quiet"
                 } elseif ($environment.UsingMacports) {
-                    $PackageManager = "$sudo port"
+                    $baseCommand = "$sudo port -q install"
                 }
 
                 # wget for downloading dotnet
@@ -2154,7 +2229,7 @@ function Start-PSBootstrap {
 
                 # Install dependencies
                 # ignore exitcode, because they may be already installed
-                Start-NativeExecution ([ScriptBlock]::Create("$PackageManager install $Deps")) -IgnoreExitcode
+                Start-NativeExecution ([ScriptBlock]::Create("$baseCommand $Deps")) -IgnoreExitcode
             } elseif ($environment.IsLinux -and $environment.IsAlpine) {
                 $Deps += 'libunwind', 'libcurl', 'bash', 'build-base', 'git', 'curl', 'wget'
 
@@ -2165,9 +2240,11 @@ function Start-PSBootstrap {
 
             # Install [fpm](https://github.com/jordansissel/fpm) and [ronn](https://github.com/rtomayko/ronn)
             if ($Package) {
-                Install-GlobalGem -Sudo $sudo -GemName "ffi" -GemVersion "1.12.0"
-                Install-GlobalGem -Sudo $sudo -GemName "fpm" -GemVersion "1.11.0"
+                Install-GlobalGem -Sudo $sudo -GemName "dotenv" -GemVersion "2.8.1"
+                Install-GlobalGem -Sudo $sudo -GemName "ffi" -GemVersion "1.16.3"
+                Install-GlobalGem -Sudo $sudo -GemName "fpm" -GemVersion "1.15.1"
                 Install-GlobalGem -Sudo $sudo -GemName "ronn" -GemVersion "0.7.3"
+                Install-GlobalGem -Sudo $sudo -GemName "rexml" -GemVersion "3.2.5"
             }
         }
 
@@ -2217,6 +2294,11 @@ function Start-PSBootstrap {
                 Write-Log -message "pwsh.exe not found. Install latest PowerShell release and add it to Path"
                 $psInstallFile = [System.IO.Path]::Combine($PSScriptRoot, "tools", "install-powershell.ps1")
                 & $psInstallFile -AddToPath
+            }
+            if ($Package) {
+                Import-Module "$PSScriptRoot\tools\wix\wix.psm1"
+                $isArm64 = "$env:RUNTIME" -eq 'arm64'
+                Install-Wix -arm64:$isArm64
             }
         }
     } finally {
@@ -3430,7 +3512,7 @@ function Clear-NativeDependencies
     $filesToDeleteWinDesktop = @()
 
     $deps = Get-Content "$PublishFolder/pwsh.deps.json" -Raw | ConvertFrom-Json -Depth 20
-    $targetRuntime = ".NETCoreApp,Version=v7.0/$($script:Options.Runtime)"
+    $targetRuntime = ".NETCoreApp,Version=v9.0/$($script:Options.Runtime)"
 
     $runtimePackNetCore = $deps.targets.${targetRuntime}.PSObject.Properties.Name -like 'runtimepack.Microsoft.NETCore.App.Runtime*'
     $runtimePackWinDesktop = $deps.targets.${targetRuntime}.PSObject.Properties.Name -like 'runtimepack.Microsoft.WindowsDesktop.App.Runtime*'

@@ -93,7 +93,7 @@ namespace Microsoft.Management.UI.Internal
 
         /// <summary>
         /// Gets ItemsSource instead.
-        /// <seealso cref="InnerList"/> Does not support adding to Items.
+        /// <see cref="InnerList"/> Does not support adding to Items.
         /// </summary>
         [Browsable(false)]
         public new ItemCollection Items
@@ -596,7 +596,7 @@ namespace Microsoft.Management.UI.Internal
                     propertyValue = string.Empty;
                 }
 
-                entryText.AppendFormat(CultureInfo.CurrentCulture, "{0}\t", propertyValue);
+                entryText.Append(CultureInfo.CurrentCulture, $"{propertyValue}\t");
             }
 
             return entryText.ToString();

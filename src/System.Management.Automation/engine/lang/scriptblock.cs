@@ -1138,9 +1138,10 @@ namespace System.Management.Automation
         /// <param name="command">The command you're calling this from (i.e. instance of PSCmdlet or value of $PSCmdlet variable).</param>
         public void Begin(InternalCommand command)
         {
-            ArgumentNullException.ThrowIfNull(command);
-
-            ArgumentNullException.ThrowIfNull(command.MyInvocation, nameof(command));
+            if (command is null || command.MyInvocation is null)
+            {
+                throw new ArgumentNullException(nameof(command));
+            }
 
             Begin(command.MyInvocation.ExpectingInput, command.commandRuntime);
         }
@@ -1332,7 +1333,6 @@ namespace System.Management.Automation
     /// Defines the exception thrown when conversion from ScriptBlock to PowerShell is forbidden
     /// (i.e. when the script block has undeclared variables or more than one statement)
     /// </summary>
-    [Serializable]
     public class ScriptBlockToPowerShellNotSupportedException : RuntimeException
     {
         #region ctor
@@ -1359,7 +1359,7 @@ namespace System.Management.Automation
         /// Initializes a new instance of ScriptBlockToPowerShellNotSupportedException setting the message and innerException.
         /// </summary>
         /// <param name="message">The exception's message.</param>
-        /// <param name="innerException">The exceptions's inner exception.</param>
+        /// <param name="innerException">The exception's inner exception.</param>
         public ScriptBlockToPowerShellNotSupportedException(string message, Exception innerException)
             : base(message, innerException)
         {
@@ -1386,9 +1386,10 @@ namespace System.Management.Automation
         /// </summary>
         /// <param name="info">Serialization information.</param>
         /// <param name="context">Streaming context.</param>
+        [Obsolete("Legacy serialization support is deprecated since .NET 8", DiagnosticId = "SYSLIB0051")] 
         protected ScriptBlockToPowerShellNotSupportedException(SerializationInfo info, StreamingContext context)
-            : base(info, context)
         {
+            throw new NotSupportedException();
         }
         #endregion Serialization
 

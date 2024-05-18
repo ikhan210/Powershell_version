@@ -12,6 +12,7 @@ using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Internal;
 using System.Management.Automation.Language;
+using static System.Management.Automation.Verbs;
 using Dbg = System.Management.Automation.Diagnostics;
 
 namespace Microsoft.PowerShell.Commands
@@ -71,6 +72,7 @@ namespace Microsoft.PowerShell.Commands
         /// Gets or sets the verb parameter to the cmdlet.
         /// </summary>
         [Parameter(ValueFromPipelineByPropertyName = true, ParameterSetName = "CmdletSet")]
+        [ArgumentCompleter(typeof(VerbArgumentCompleter))]
         public string[] Verb
         {
             get
@@ -587,7 +589,7 @@ namespace Microsoft.PowerShell.Commands
 
             // No telemetry here - capturing the name of a command which we are not familiar with
             // may be confidential customer information
-            // We want telementry on commands people look for but don't exist - this should give us an idea
+            // We want telemetry on commands people look for but don't exist - this should give us an idea
             // what sort of commands people expect but either don't exist, or maybe should be installed by default.
             // The StartsWith is to avoid logging telemetry when suggestion mode checks the
             // current directory for scripts/exes in the current directory and '.' is not in the path.

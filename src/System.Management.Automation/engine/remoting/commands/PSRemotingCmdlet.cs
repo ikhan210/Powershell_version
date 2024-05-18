@@ -203,7 +203,7 @@ namespace Microsoft.PowerShell.Commands
         /// <summary>
         /// Default shellname.
         /// </summary>
-        protected const string DefaultPowerShellRemoteShellName = System.Management.Automation.Remoting.Client.WSManNativeApi.ResourceURIPrefix + "Microsoft.PowerShell";
+        protected const string DefaultPowerShellRemoteShellName = WSManNativeApi.ResourceURIPrefix + "Microsoft.PowerShell";
 
         /// <summary>
         /// Default application name for the connection uri.
@@ -592,7 +592,7 @@ namespace Microsoft.PowerShell.Commands
         /// <summary>
         /// This parameters specifies the appname which identifies the connection
         /// end point on the remote machine. If this parameter is not specified
-        /// then the value specified in DEFAULTREMOTEAPPNAME will be used. If thats
+        /// then the value specified in DEFAULTREMOTEAPPNAME will be used. If that's
         /// not specified as well, then "WSMAN" will be used.
         /// </summary>
         [Parameter(ValueFromPipelineByPropertyName = true,
@@ -2278,7 +2278,7 @@ namespace Microsoft.PowerShell.Commands
             // Semantic checks on the using statement have already validated that there are no arbitrary expressions,
             // so we'll allow these expressions in everything but NoLanguage mode.
 
-            bool allowUsingExpressions = (Context.SessionState.LanguageMode != PSLanguageMode.NoLanguage);
+            bool allowUsingExpressions = Context.SessionState.LanguageMode != PSLanguageMode.NoLanguage;
             object[] usingValuesInArray = null;
             IDictionary usingValuesInDict = null;
 
@@ -2332,7 +2332,7 @@ namespace Microsoft.PowerShell.Commands
             try
             {
                 // This is trusted input as long as we're in FullLanguage mode
-                bool isTrustedInput = (Context.LanguageMode == PSLanguageMode.FullLanguage);
+                bool isTrustedInput = Context.LanguageMode == PSLanguageMode.FullLanguage;
                 powershell = _scriptBlock.GetPowerShell(isTrustedInput, _args);
             }
             catch (ScriptBlockToPowerShellNotSupportedException)
@@ -2428,7 +2428,7 @@ namespace Microsoft.PowerShell.Commands
                 // GetExpressionValue ensures that it only does variable access when supplied a VariableExpressionAst.
                 // So, this is still safe to use in ConstrainedLanguage and will not result in arbitrary code
                 // execution.
-                bool allowVariableAccess = (Context.SessionState.LanguageMode != PSLanguageMode.NoLanguage);
+                bool allowVariableAccess = Context.SessionState.LanguageMode != PSLanguageMode.NoLanguage;
 
                 foreach (var varAst in paramUsingVars)
                 {
@@ -3940,9 +3940,9 @@ namespace Microsoft.PowerShell.Commands
                     string shellUri = null;
                     if (!string.IsNullOrEmpty(configurationName))
                     {
-                        shellUri = (configurationName.IndexOf(
-                                    System.Management.Automation.Remoting.Client.WSManNativeApi.ResourceURIPrefix, StringComparison.OrdinalIgnoreCase) != -1) ?
-                                    configurationName : System.Management.Automation.Remoting.Client.WSManNativeApi.ResourceURIPrefix + configurationName;
+                        shellUri = configurationName.Contains(WSManNativeApi.ResourceURIPrefix, StringComparison.OrdinalIgnoreCase)
+                            ? configurationName
+                            : WSManNativeApi.ResourceURIPrefix + configurationName;
                     }
 
                     foreach (Runspace runspace in runspaces)

@@ -61,8 +61,7 @@ namespace Microsoft.PowerShell.Cim
         public override System.Collections.ObjectModel.Collection<PSAdaptedProperty> GetProperties(object baseObject)
         {
             // baseObject should never be null
-            CimInstance cimInstance = baseObject as CimInstance;
-            if (cimInstance == null)
+            if (baseObject is not CimInstance cimInstance)
             {
                 string msg = string.Format(CultureInfo.InvariantCulture,
                     CimInstanceTypeAdapterResources.BaseObjectNotCimInstance,
@@ -107,8 +106,7 @@ namespace Microsoft.PowerShell.Cim
             }
 
             // baseObject should never be null
-            CimInstance cimInstance = baseObject as CimInstance;
-            if (cimInstance == null)
+            if (baseObject is not CimInstance cimInstance)
             {
                 string msg = string.Format(CultureInfo.InvariantCulture,
                     CimInstanceTypeAdapterResources.BaseObjectNotCimInstance,
@@ -142,8 +140,7 @@ namespace Microsoft.PowerShell.Cim
             }
 
             // baseObject should never be null
-            CimInstance cimInstance = baseObject as CimInstance;
-            if (cimInstance == null)
+            if (baseObject is not CimInstance cimInstance)
             {
                 string msg = string.Format(
                     CultureInfo.InvariantCulture,
@@ -197,8 +194,7 @@ namespace Microsoft.PowerShell.Cim
         {
             ArgumentNullException.ThrowIfNull(adaptedProperty);
 
-            CimProperty cimProperty = adaptedProperty.Tag as CimProperty;
-            if (cimProperty != null)
+            if (adaptedProperty.Tag is CimProperty cimProperty)
             {
                 return CimTypeToTypeNameDisplayString(cimProperty.CimType);
             }
@@ -219,8 +215,7 @@ namespace Microsoft.PowerShell.Cim
         {
             ArgumentNullException.ThrowIfNull(adaptedProperty);
 
-            CimProperty cimProperty = adaptedProperty.Tag as CimProperty;
-            if (cimProperty != null)
+            if (adaptedProperty.Tag is CimProperty cimProperty)
             {
                 return cimProperty.Value;
             }
@@ -238,16 +233,11 @@ namespace Microsoft.PowerShell.Cim
         {
             if (!string.IsNullOrEmpty(namespaceName))
             {
-                string fullTypeName = string.Format(CultureInfo.InvariantCulture,
-                                        "Microsoft.Management.Infrastructure.CimInstance#{0}/{1}",
-                                        namespaceName,
-                                        className);
+                string fullTypeName = string.Create(CultureInfo.InvariantCulture, $"Microsoft.Management.Infrastructure.CimInstance#{namespaceName}/{className}");
                 typeNamesWithNamespace.Add(fullTypeName);
             }
 
-            typeNamesWithoutNamespace.Add(string.Format(CultureInfo.InvariantCulture,
-                                     "Microsoft.Management.Infrastructure.CimInstance#{0}",
-                                     className));
+            typeNamesWithoutNamespace.Add(string.Create(CultureInfo.InvariantCulture, $"Microsoft.Management.Infrastructure.CimInstance#{className}"));
         }
 
         private static List<CimClass> GetInheritanceChain(CimInstance cimInstance)
